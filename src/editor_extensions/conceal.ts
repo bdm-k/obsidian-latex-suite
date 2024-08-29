@@ -432,111 +432,142 @@ function concealFraction(eqn: string, selection: EditorSelection, eqnStartBound:
 	return concealments;
 }
 
-function conceal(view: EditorView) {
+function conceal(view: EditorView): readonly Concealment[] {
+	const concealments: Concealment[] = [];
 
-	const widgets: Range<Decoration>[] = [];
 	const selection = view.state.selection;
-
-	// Make selecting LaTeX source easier
-	// By always applying conceal when the mouse is down (the user is making a selection)
-	// And not revealing source until the mouse is up
 	const mousedown = view.plugin(livePreviewState)?.mousedown;
 
 
 	for (const { from, to } of view.visibleRanges) {
 
-		syntaxTree(view.state).iterate({ from, to, enter: (node) => {
-			const type = node.type;
-			const to = node.to;
+		syntaxTree(view.state).iterate({
+			from,
+			to,
+			enter: (node) => {
+				const type = node.type;
+				const to = node.to;
 
-			if (!(type.name.contains("begin") && type.name.contains("math"))) {
-				return;
-			}
-
-			const bounds = getEquationBounds(view.state, to);
-			if (!bounds) return;
-
-
-			const eqn = view.state.doc.sliceString(bounds.start, bounds.end);
-
-
-			const ALL_SYMBOLS = {...greek, ...cmd_symbols};
-
-			const concealments = [
-				...concealSymbols(eqn, "\\^", "", map_super),
-				...concealSymbols(eqn, "_", "", map_sub),
-				...concealSymbols(eqn, "\\\\frac", "", fractions),
-				...concealSymbols(eqn, "\\\\", "", ALL_SYMBOLS, undefined, false),
-				...concealSupSub(eqn, true, ALL_SYMBOLS),
-				...concealSupSub(eqn, false, ALL_SYMBOLS),
-				...concealModifier(eqn, "hat", "\u0302"),
-				...concealModifier(eqn, "dot", "\u0307"),
-				...concealModifier(eqn, "ddot", "\u0308"),
-				...concealModifier(eqn, "overline", "\u0304"),
-				...concealModifier(eqn, "bar", "\u0304"),
-				...concealModifier(eqn, "tilde", "\u0303"),
-				...concealModifier(eqn, "vec", "\u20D7"),
-				...concealSymbols(eqn, "\\\\", "", brackets, "cm-bracket"),
-				...concealAtoZ(eqn, "\\\\mathcal{", "}", mathscrcal),
-				...concealModifiedGreekLetters(eqn, greek),
-				...concealModified_A_to_Z_0_to_9(eqn, mathbb),
-				...concealText(eqn),
-				...concealBraKet(eqn, selection, bounds.start, mousedown),
-				...concealSet(eqn, selection, bounds.start, mousedown),
-				...concealFraction(eqn, selection, bounds.start, mousedown),
-				...concealOperators(eqn, operators)
-			];
-
-
-			for (const concealment of concealments) {
-				const start = bounds.start + concealment.start;
-				const end = bounds.start + concealment.end;
-				const symbol = concealment.replacement;
-
-				// Improve selecting empty replacements such as "\frac" -> ""
-				let inclusiveStart = false;
-				let inclusiveEnd = false;
-				if (symbol === "") {
-					inclusiveStart = true;
+				if (!(type.name.contains("begin") && type.name.contains("math"))) {
+					return;
 				}
 
-				if (!mousedown && selectionAndRangeOverlap(selection, start, end)) continue;
+				const bounds = getEquationBounds(view.state, to);
+				if (!bounds) return;
 
-				if (start === end) {
-					// Add an additional "/" symbol, as part of concealing \\frac{}{} -> ()/()
-					widgets.push(
-						Decoration.widget({
-							widget: new TextWidget(symbol),
-							block: false
-						}).range(start, end)
-					);
-				}
-				else {
-					widgets.push(
-						Decoration.replace({
-							widget: new ConcealWidget(symbol, concealment.class, concealment.elementType),
-							inclusiveStart: inclusiveStart,
-							inclusiveEnd: inclusiveEnd,
-							block: false,
-						}).range(start, end)
-					);
-				}
-			}
-		}
 
+				const eqn = view.state.doc.sliceString(bounds.start, bounds.end);
+
+
+				const ALL_SYMBOLS = {...greek, ...cmd_symbols};
+
+				const localConcealments = [
+					...concealSymbols(eqn, "\\^", "", map_super),
+					...concealSymbols(eqn, "_", "", map_sub),
+					...concealSymbols(eqn, "\\\\frac", "", fractions),
+					...concealSymbols(eqn, "\\\\", "", ALL_SYMBOLS, undefined, false),
+					...concealSupSub(eqn, true, ALL_SYMBOLS),
+					...concealSupSub(eqn, false, ALL_SYMBOLS),
+					...concealModifier(eqn, "hat", "\u0302"),
+					...concealModifier(eqn, "dot", "\u0307"),
+					...concealModifier(eqn, "ddot", "\u0308"),
+					...concealModifier(eqn, "overline", "\u0304"),
+					...concealModifier(eqn, "bar", "\u0304"),
+					...concealModifier(eqn, "tilde", "\u0303"),
+					...concealModifier(eqn, "vec", "\u20D7"),
+					...concealSymbols(eqn, "\\\\", "", brackets, "cm-bracket"),
+					...concealAtoZ(eqn, "\\\\mathcal{", "}", mathscrcal),
+					...concealModifiedGreekLetters(eqn, greek),
+					...concealModified_A_to_Z_0_to_9(eqn, mathbb),
+					...concealText(eqn),
+					...concealBraKet(eqn, selection, bounds.start, mousedown),
+					...concealSet(eqn, selection, bounds.start, mousedown),
+					...concealFraction(eqn, selection, bounds.start, mousedown),
+					...concealOperators(eqn, operators),
+				];
+
+				// Make the 'start' and 'end' fields represent positions in the entire
+				// document (not in a math expression)
+				for (const concealment of localConcealments) {
+					concealment.start += bounds.start;
+					concealment.end += bounds.start;
+				}
+
+				concealments.push(...localConcealments);
+			},
 		});
 	}
 
-	return Decoration.set(widgets, true);
+	return concealments;
+}
+
+/*
+* Build a decoration set from the given concealments
+* Typically, any concealments that overlap with the editor are excluded, but
+* when the mouse is down, they are not excluded. The purpose is to make
+* selecting math expressions easier.
+*/
+function buildDecoSet(
+	view: EditorView,
+	concealments: readonly Concealment[]
+): DecorationSet {
+	const widgets: Range<Decoration>[] = [];
+
+	const selection = view.state.selection;
+	const mousedown = view.plugin(livePreviewState)?.mousedown;
+
+	for (const concealment of concealments) {
+		const isOverlapping = selectionAndRangeOverlap(
+			selection,
+			concealment.start,
+			concealment.end,
+		);
+
+		if (isOverlapping && !mousedown) continue;
+
+		if (concealment.start === concealment.end) {
+			// Add an additional "/" symbol, as part of concealing \\frac{}{} -> ()/()
+			widgets.push(
+				Decoration.widget({
+					widget: new TextWidget(concealment.replacement),
+					block: false,
+				}).range(concealment.start, concealment.end)
+			);
+		}
+		else {
+			// Improve selecting empty replacements such as "\frac" -> ""
+			const inclusiveStart = concealment.replacement === "";
+			const inclusiveEnd = false;
+
+			widgets.push(
+				Decoration.replace({
+					widget: new ConcealWidget(
+						concealment.replacement,
+						concealment.class,
+						concealment.elementType,
+					),
+					inclusiveStart,
+					inclusiveEnd,
+					block: false,
+				}).range(concealment.start, concealment.end)
+			);
+		}
+	}
+
+	return Decoration.set(widgets);
 }
 
 export const concealPlugin = ViewPlugin.fromClass(class {
-	decorations: DecorationSet
+	concealments: readonly Concealment[];
+	decorations: DecorationSet;
 	constructor(view: EditorView) {
-		this.decorations = conceal(view)
+		this.concealments = conceal(view);
+		this.decorations = buildDecoSet(view, this.concealments);
 	}
 	update(update: ViewUpdate) {
-		if (update.docChanged || update.viewportChanged || update.selectionSet)
-			this.decorations = conceal(update.view)
+		if (update.docChanged || update.viewportChanged || update.selectionSet) {
+			this.concealments = conceal(update.view);
+			this.decorations = buildDecoSet(update.view, this.concealments);
+		}
 	}
 }, { decorations: v => v.decorations, });
