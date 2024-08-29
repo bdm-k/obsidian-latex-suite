@@ -15,7 +15,7 @@ import { clearSnippetQueue } from "./snippets/codemirror/snippet_queue_state_fie
 import { handleUndoRedo } from "./snippets/codemirror/history";
 import { snippetExtensions } from "./snippets/codemirror/extensions";
 
-import { concealPlugin } from "./editor_extensions/conceal";
+import { concealStateField } from "./editor_extensions/conceal";
 
 import { LatexSuiteCMSettings } from "./settings/settings";
 import { colorPairedBracketsPluginLowestPrec, highlightCursorBracketsPlugin } from "./editor_extensions/highlight_brackets";
@@ -124,7 +124,7 @@ export const latexSuiteExtensions = (settings: LatexSuiteCMSettings) => [
 
 // Optional CodeMirror extensions for optional features
 export const optionalExtensions: {[feature: string]: Extension[]} = {
-	"conceal": [concealPlugin.extension],
+	"conceal": [concealStateField.extension],
 	"colorPairedBrackets": [colorPairedBracketsPluginLowestPrec],
 	"highlightCursorBrackets": [highlightCursorBracketsPlugin.extension],
 	"mathPreview": [cursorTooltipField.extension, cursorTooltipBaseTheme, tooltips({position: "absolute"})]
