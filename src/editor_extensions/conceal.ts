@@ -9,12 +9,22 @@ import { cmd_symbols, greek, map_super, map_sub, brackets, mathbb, mathscrcal, f
 import { getEquationBounds } from "src/utils/context";
 
 
+// TODO: Consider creating dedicated type that contain 'cursorPosType'.
 export interface Concealment {
 	start: number,
 	end: number,
 	replacement: string,
 	class?: string,
-	elementType?: string
+	elementType?: string,
+	// Objects returned by the 'conceal' function contain 'cursorPosType'.
+	// "within" => Disable this concealment
+	// "apart"  => Enable this concealment
+	// "edge"   => Whether to enable or disable this concealment depends on the
+	//             previous state. If this is disabled in the previous state, we
+	//             keep this disabled. If this is enabled in the previous state,
+	//             we keep this enabled, and also uncover this concealment with a
+	//             time delay.
+	cursorPosType?: "within" | "apart" | "edge",
 }
 
 
@@ -432,6 +442,23 @@ function concealFraction(eqn: string, selection: EditorSelection, eqnStartBound:
 	return concealments;
 }
 
+function determineCursorPosType(
+	sel: EditorSelection,
+	concealment: Concealment,
+): Concealment["cursorPosType"] {
+	const overlapRangeFrom = Math.max(sel.main.from, concealment.start);
+	const overlapRangeTo = Math.min(sel.main.to, concealment.end);
+
+	if (overlapRangeFrom > overlapRangeTo) return "apart";
+
+	if (
+		overlapRangeFrom === overlapRangeTo &&
+		(overlapRangeFrom === concealment.start || overlapRangeFrom === concealment.end)
+	) return "edge";
+
+	return "within";
+}
+
 function conceal(view: EditorView): readonly Concealment[] {
 	const concealments: Concealment[] = [];
 
@@ -496,6 +523,10 @@ function conceal(view: EditorView): readonly Concealment[] {
 				concealments.push(...localConcealments);
 			},
 		});
+	}
+
+	for (const concealment of concealments) {
+		concealment.cursorPosType = determineCursorPosType(selection, concealment);
 	}
 
 	return concealments;
