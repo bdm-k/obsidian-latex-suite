@@ -1,7 +1,7 @@
 // Conceal functions
 
 import { EditorSelection } from "@codemirror/state";
-import { Concealment, ConcealSpec, ConcealState } from "./conceal";
+import { ConcealSpec } from "./conceal";
 import { findMatchingBracket } from "src/utils/editor_utils";
 import { EditorView } from "@codemirror/view";
 import { getEquationBounds } from "src/utils/context";
@@ -50,22 +50,6 @@ function selectionAndRangeOverlap(
 	return false;
 }
 
-function determineCursorPosType(
-	sel: EditorSelection,
-	concealSpec: ConcealSpec,
-): Concealment["cursorPosType"] {
-	const overlapRangeFrom = Math.max(sel.main.from, concealSpec.start);
-	const overlapRangeTo = Math.min(sel.main.to, concealSpec.end);
-
-	if (overlapRangeFrom > overlapRangeTo) return "apart";
-
-	if (
-		overlapRangeFrom === overlapRangeTo &&
-		(overlapRangeFrom === concealSpec.start || overlapRangeFrom === concealSpec.end)
-	) return "edge";
-
-	return "within";
-}
 
 function concealSymbols(eqn: string, prefix: string, suffix: string, symbolMap: {[key: string]: string}, className?: string, allowSucceedingLetters = true):ConcealSpec[] {
 	const symbolNames = Object.keys(symbolMap);
@@ -394,7 +378,7 @@ function concealFraction(eqn: string, selection: EditorSelection, eqnStartBound:
 	return concealSpecs;
 }
 
-export function conceal(view: EditorView): ConcealState {
+export function conceal(view: EditorView): ConcealSpec[] {
 	const concealSpecs: ConcealSpec[] = [];
 
 	const selection = view.state.selection;
@@ -459,20 +443,5 @@ export function conceal(view: EditorView): ConcealState {
 			},
 		});
 	}
-
-	const concealState: ConcealState = concealSpecs.map((concealSpec) => {
-		const cursorPosType = determineCursorPosType(selection, concealSpec);
-		// Normally, we only enable concealments that are apart from the cursor.
-		// However, when the mouse is down, we enable all concealments. This helps
-		// make selecting math expressions easier.
-		const enable = (cursorPosType === "apart" || mousedown) ? true : false;
-
-		return {
-			...concealSpec,
-			cursorPosType,
-			enable,
-		};
-	});
-
-	return concealState;
+	return concealSpecs;
 }
