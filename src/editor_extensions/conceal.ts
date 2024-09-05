@@ -9,23 +9,18 @@ import { cmd_symbols, greek, map_super, map_sub, brackets, mathbb, mathscrcal, f
 import { getEquationBounds } from "src/utils/context";
 
 
-// TODO: Consider creating dedicated type that contain 'cursorPosType'.
-export interface Concealment {
+interface Concealment {
 	start: number,
 	end: number,
 	replacement: string,
 	class?: string,
 	elementType?: string,
-	// Objects returned by the 'conceal' function contain 'cursorPosType'.
-	// "within" => Disable this concealment
-	// "apart"  => Enable this concealment
-	// "edge"   => Whether to enable or disable this concealment depends on the
-	//             previous state. If this is disabled in the previous state, we
-	//             keep this disabled. If this is enabled in the previous state,
-	//             we keep this enabled, and also uncover this concealment with a
-	//             time delay.
-	cursorPosType?: "within" | "apart" | "edge",
 }
+
+type ConcealState = (Concealment & {
+	cursorPosType: "within" | "apart" | "edge",
+	enable: boolean,
+})[];
 
 
 class ConcealWidget extends WidgetType {
@@ -445,7 +440,7 @@ function concealFraction(eqn: string, selection: EditorSelection, eqnStartBound:
 function determineCursorPosType(
 	sel: EditorSelection,
 	concealment: Concealment,
-): Concealment["cursorPosType"] {
+): ConcealState[number]["cursorPosType"] {
 	const overlapRangeFrom = Math.max(sel.main.from, concealment.start);
 	const overlapRangeTo = Math.min(sel.main.to, concealment.end);
 
@@ -459,7 +454,7 @@ function determineCursorPosType(
 	return "within";
 }
 
-function conceal(view: EditorView): readonly Concealment[] {
+function conceal(view: EditorView): ConcealState {
 	const concealments: Concealment[] = [];
 
 	const selection = view.state.selection;
@@ -525,11 +520,18 @@ function conceal(view: EditorView): readonly Concealment[] {
 		});
 	}
 
-	for (const concealment of concealments) {
-		concealment.cursorPosType = determineCursorPosType(selection, concealment);
-	}
+	const concealState: ConcealState = concealments.map((concealment) => {
+		const cursorPosType = determineCursorPosType(selection, concealment);
+		const enable = cursorPosType === "apart" ? true : false;
 
-	return concealments;
+		return {
+			...concealment,
+			cursorPosType,
+			enable,
+		};
+	});
+
+	return concealState;
 }
 
 /*
@@ -540,7 +542,7 @@ function conceal(view: EditorView): readonly Concealment[] {
 */
 function buildDecoSet(
 	view: EditorView,
-	concealments: readonly Concealment[]
+	concealments: ConcealState,
 ): DecorationSet {
 	const widgets: Range<Decoration>[] = [];
 
@@ -589,7 +591,7 @@ function buildDecoSet(
 }
 
 export const concealPlugin = ViewPlugin.fromClass(class {
-	concealments: readonly Concealment[];
+	concealments: ConcealState;
 	decorations: DecorationSet;
 	constructor(view: EditorView) {
 		this.concealments = conceal(view);
