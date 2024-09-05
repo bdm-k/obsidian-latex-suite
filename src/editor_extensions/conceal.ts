@@ -437,6 +437,13 @@ function concealFraction(eqn: string, selection: EditorSelection, eqnStartBound:
 	return concealments;
 }
 
+function atSamePosAfter(update: ViewUpdate, oldConceal: ConcealState[number], newConceal: ConcealState[number]): boolean {
+	// Set associativity to ensure that insertions on either side of the concealed region do not expand the region
+	const oldStartUpdated = update.changes.mapPos(oldConceal.start, 1);
+	const oldEndUpdated = update.changes.mapPos(oldConceal.end, -1);
+	return oldStartUpdated == newConceal.start && oldEndUpdated == newConceal.end;
+}
+
 function determineCursorPosType(
 	sel: EditorSelection,
 	concealment: Concealment,
