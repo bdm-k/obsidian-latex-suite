@@ -20,8 +20,12 @@ export interface Concealment extends ConcealSpec {
 
 export type ConcealState = {
 	concealments: Concealment[],
-	revealTimeout?: NodeJS.Timeout
+	revealTimeout?: NodeJS.Timeout,
 }
+
+// Represents how a concealment should be handled
+// 'delay' means reveal after a time delay.
+type ConcealAction = "conceal" | "reveal" | "delay";
 
 
 class ConcealWidget extends WidgetType {
@@ -89,12 +93,11 @@ function atSamePosAfter(
 	return oldStartUpdated == newConceal.start && oldEndUpdated == newConceal.end;
 }
 
-
 function determineCursorPosType(
 	sel: EditorSelection,
 	concealSpec: ConcealSpec,
 ): Concealment["cursorPosType"] {
-	
+
 	for (const range of sel.ranges) {
 		const overlapRangeFrom = Math.max(range.from, concealSpec.start);
 		const overlapRangeTo = Math.min(range.to, concealSpec.end);
@@ -104,52 +107,47 @@ function determineCursorPosType(
 		) {
 			return "edge";
 		}
-		
+
 		if (overlapRangeFrom <= overlapRangeTo) return "within";
 	}
-	
+
 	return "apart";
 }
 
-/**
- * Determine whether a concealment should be enabled based on its 'cursorPosType'
- * in the ConcealState before and after update and current mousedown state. 
- * 
- * When the mouse is down, we enable all concealments to make selecting math expressions 
- * easier.
- * 
- * When the mouse is up, we enable concealments according to the table below.
- * The row represents the previous 'cursorPosType' and the column represents the current
- * 'cursorPosType'. Each cell describes what to do with this concealment.
- *
- *        |  apart  |  edge  | within 
- * -----------------------------------
- * apart  | conceal | delay  | reveal
- * edge   | conceal | delay  | reveal
- * within | conceal | reveal | reveal
- * N/A    | conceal | reveal | reveal
- * 
- * 'delay' means reveal after a time delay.
- * 'N/A' means that the concealment do not exist in the ConcealState before update, which
- * should be judged by atSamePosAfter function.
- */
-function shouldPerformConceal(
+/*
+* We determine how to handle a concealment based on its 'cursorPosType' before
+* and after an update and current mousedown state.
+*
+* When the mouse is down, we 'conceal' all concealments to make selecting math
+* expressions easier.
+*
+* When the mouse is up, we follow the table below.
+* The row represents the previous 'cursorPosType' and the column represents the
+* current 'cursorPosType'. Each cell contains the action to be taken.
+*
+*        |  apart  |  edge  | within
+* -----------------------------------
+* apart  | conceal | delay  | reveal
+* edge   | conceal | delay  | reveal
+* within | conceal | reveal | reveal
+* N/A    | conceal | reveal | reveal
+*
+* 'N/A' means that the concealment do not exist before the update, which should
+* be judged by 'atSamePosAfter' function.
+*/
+function determineAction(
 	oldCursor: Concealment["cursorPosType"] | null,
 	newCursor: Concealment["cursorPosType"],
-	mousedown: boolean
-): boolean | "delayedReveal" {
-	
-	if (mousedown) {
-		return true;
-	} else if (newCursor === "apart") {
-		return true;
-	} else if (newCursor === "within") {
-		return false;
-	} else if (!oldCursor || oldCursor === "within"){
-		return false;
-	} else {
-		return "delayedReveal";
-	}
+	mousedown: boolean,
+): ConcealAction {
+	if (mousedown) return "conceal";
+
+	if (newCursor === "apart") return "conceal";
+	if (newCursor === "within") return "reveal";
+
+	// newCursor === "edge"
+	if (!oldCursor || oldCursor === "within") return "reveal";
+	else return "delay";
 }
 
 // Build a decoration set from the given conceal state
@@ -208,7 +206,7 @@ export const concealStateField = StateField.define<ConcealState>({
 				newState = effect.value;
 			}
 		}
-		
+
 		if (!newState) return oldState;
 
 		// If the updateConcealEffect is present
@@ -227,60 +225,59 @@ export const concealStateField = StateField.define<ConcealState>({
 		// Listen to view updates and update this field
 		EditorView.updateListener.of((update: ViewUpdate) => {
 			if (!(update.docChanged || update.viewportChanged || update.selectionSet))
-				return; 
+				return;
 			// NOTE: The following lines cause another view update. However, due to
 			// the condition above, we can expect that an infinite loop will not
 			// occur.
-			
+
 			const oldState = update.startState.field(thisField);
 			const selection = update.state.selection;
 			const mousedown = update.view.plugin(livePreviewState)?.mousedown;
 
-			const concealSpecs = conceal(update.view);
-
 			if (oldState.revealTimeout) {
-				// Canceal the delayed revealment when the cursor moves away from the
-				// edge of the concealment
+				// Cancel the delayed revealment whenever we update the concealments
 				clearTimeout(oldState.revealTimeout);
 			}
 
+			const concealSpecs = conceal(update.view);
+
+			// Collect concealments from the new conceal specs
 			const concealments: Concealment[] = [];
+			// concealments that should be revealed after a delay (i.e. 'delay' action)
 			const delayedConcealments: Concealment[] = [];
-			
+
 			for (const concealSpec of concealSpecs) {
 				const cursorPosType = determineCursorPosType(selection, concealSpec);
 				const oldConceal = oldState.concealments.find(
 					(old) => atSamePosAfter(update, old, concealSpec)
 				);
-				
-				const shouldPerform = shouldPerformConceal(
+
+				const concealAction = determineAction(
 					oldConceal?.cursorPosType, cursorPosType, mousedown
 				);
-				const delayed = shouldPerform === "delayedReveal";
-				const enable = delayed || shouldPerform;
 
-				const concealment: Concealment =  {
+				const concealment: Concealment = {
 					...concealSpec,
 					cursorPosType,
-					enable,
+					enable: concealAction !== "reveal",
 				};
 
-				if (delayed) {
+				if (concealAction === "delay") {
 					delayedConcealments.push(concealment);
 				}
 
-				concealments.push(concealment);	
+				concealments.push(concealment);
 			}
 
+			// Set a timeout to reveal delayed concealments
 			let revealTimeout: NodeJS.Timeout | null = null;
-
 			if (delayedConcealments.length > 0) {
 				revealTimeout = setTimeout(() => {
 					for (const concealment of delayedConcealments) {
 						concealment.enable = false;
 					}
 					update.view.dispatch({
-						effects: [updateConcealEffect.of({concealments})]
+						effects: [updateConcealEffect.of({ concealments })]
 					});
 				}, 1000);
 			}
@@ -288,7 +285,7 @@ export const concealStateField = StateField.define<ConcealState>({
 			update.view.dispatch({
 				effects: [updateConcealEffect.of({
 					concealments,
-					revealTimeout
+					revealTimeout,
 				})]
 			});
 		}),
