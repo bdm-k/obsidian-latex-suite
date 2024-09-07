@@ -5,18 +5,29 @@ import { EditorSelection, Range, StateEffect, StateField } from "@codemirror/sta
 import { conceal } from "./conceal_fns";
 import { livePreviewState } from "obsidian";
 
-export interface ConcealSpec {
+export type Replacement = {
 	start: number,
 	end: number,
 	replacement: string,
 	class?: string,
 	elementType?: string,
+};
+
+export type ConcealSpec = Replacement[];
+
+/**
+ * Make a ConcealSpec from the given list of Replacements.
+ * This function essentially does nothing but improves readability.
+ */
+export function mkConcealSpec(...replacements: Replacement[]) {
+	return replacements;
 }
 
-export interface Concealment extends ConcealSpec {
+export type Concealment = {
+	spec: ConcealSpec,
 	cursorPosType: "within" | "apart" | "edge",
 	enable: boolean,
-}
+};
 
 export type ConcealState = {
 	concealments: Concealment[],
@@ -86,32 +97,52 @@ function atSamePosAfter(
 	oldConceal: ConcealSpec,
 	newConceal: ConcealSpec,
 ): boolean {
-	// Set associativity to ensure that insertions on either side of the concealed
-	// region do not expand the region
-	const oldStartUpdated = update.changes.mapPos(oldConceal.start, 1);
-	const oldEndUpdated = update.changes.mapPos(oldConceal.end, -1);
-	return oldStartUpdated == newConceal.start && oldEndUpdated == newConceal.end;
+	if (oldConceal.length !== newConceal.length) return false;
+
+	for (let i = 0; i < oldConceal.length; ++i) {
+		// Set associativity to ensure that insertions on either side of the
+		// concealed region do not expand the region
+		const oldStartUpdated = update.changes.mapPos(oldConceal[i].start, 1);
+		const oldEndUpdated = update.changes.mapPos(oldConceal[i].end, -1);
+		const b = oldStartUpdated == newConceal[i].start && oldEndUpdated == newConceal[i].end;
+		if (!b) return false;
+	}
+
+	return true;
 }
 
 function determineCursorPosType(
 	sel: EditorSelection,
 	concealSpec: ConcealSpec,
 ): Concealment["cursorPosType"] {
+	// Priority: "within" > "edge" > "apart"
+
+	let cursorPosType: Concealment["cursorPosType"] = "apart";
 
 	for (const range of sel.ranges) {
-		const overlapRangeFrom = Math.max(range.from, concealSpec.start);
-		const overlapRangeTo = Math.min(range.to, concealSpec.end);
-		if (
-			overlapRangeFrom === overlapRangeTo &&
-			(overlapRangeFrom === concealSpec.start || overlapRangeFrom === concealSpec.end)
-		) {
-			return "edge";
+		for (const replace of concealSpec) {
+			// 'cursorPosType' is guaranteed to be "edge" or "apart" at this point
+			const overlapRangeFrom = Math.max(range.from, replace.start);
+			const overlapRangeTo = Math.min(range.to, replace.end);
+
+			if (
+				overlapRangeFrom === overlapRangeTo &&
+				(overlapRangeFrom === replace.start || overlapRangeFrom === replace.end)
+			) {
+				cursorPosType = "edge";
+				continue;
+			}
+
+			if (overlapRangeFrom <= overlapRangeTo) {
+				cursorPosType = "within";
+				break;
+			}
 		}
 
-		if (overlapRangeFrom <= overlapRangeTo) return "within";
+		if (cursorPosType === "within") return "within";
 	}
 
-	return "apart";
+	return cursorPosType;
 }
 
 /*
@@ -157,32 +188,34 @@ function buildDecoSet(concealState: ConcealState): DecorationSet {
 	for (const concealment of concealState.concealments) {
 		if (!concealment.enable) continue;
 
-		if (concealment.start === concealment.end) {
-			// Add an additional "/" symbol, as part of concealing \\frac{}{} -> ()/()
-			decos.push(
-				Decoration.widget({
-					widget: new TextWidget(concealment.replacement),
-					block: false,
-				}).range(concealment.start, concealment.end)
-			);
-		}
-		else {
-			// Improve selecting empty replacements such as "\frac" -> ""
-			const inclusiveStart = concealment.replacement === "";
-			const inclusiveEnd = false;
+		for (const replace of concealment.spec) {
+			if (replace.start === replace.end) {
+				// Add an additional "/" symbol, as part of concealing \\frac{}{} -> ()/()
+				decos.push(
+					Decoration.widget({
+						widget: new TextWidget(replace.replacement),
+						block: false,
+					}).range(replace.start, replace.end)
+				);
+			}
+			else {
+				// Improve selecting empty replacements such as "\frac" -> ""
+				const inclusiveStart = replace.replacement === "";
+				const inclusiveEnd = false;
 
-			decos.push(
-				Decoration.replace({
-					widget: new ConcealWidget(
-						concealment.replacement,
-						concealment.class,
-						concealment.elementType,
-					),
-					inclusiveStart,
-					inclusiveEnd,
-					block: false,
-				}).range(concealment.start, concealment.end)
-			);
+				decos.push(
+					Decoration.replace({
+						widget: new ConcealWidget(
+							replace.replacement,
+							replace.class,
+							replace.elementType,
+						),
+						inclusiveStart,
+						inclusiveEnd,
+						block: false,
+					}).range(replace.start, replace.end)
+				);
+			}
 		}
 	}
 
@@ -193,9 +226,7 @@ const updateConcealEffect = StateEffect.define<ConcealState>();
 
 export const concealStateField = StateField.define<ConcealState>({
 	create() {
-		return {
-			concealments: []
-		};
+		return { concealments: [] };
 	},
 
 	update(oldState, transaction) {
@@ -249,7 +280,7 @@ export const concealStateField = StateField.define<ConcealState>({
 			for (const concealSpec of concealSpecs) {
 				const cursorPosType = determineCursorPosType(selection, concealSpec);
 				const oldConceal = oldState.concealments.find(
-					(old) => atSamePosAfter(update, old, concealSpec)
+					(old) => atSamePosAfter(update, old.spec, concealSpec)
 				);
 
 				const concealAction = determineAction(
@@ -257,7 +288,7 @@ export const concealStateField = StateField.define<ConcealState>({
 				);
 
 				const concealment: Concealment = {
-					...concealSpec,
+					spec: concealSpec,
 					cursorPosType,
 					enable: concealAction !== "reveal",
 				};
@@ -290,4 +321,4 @@ export const concealStateField = StateField.define<ConcealState>({
 			});
 		}),
 	]
-})
+});
