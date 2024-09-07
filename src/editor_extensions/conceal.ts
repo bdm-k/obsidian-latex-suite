@@ -5,18 +5,47 @@ import { EditorSelection, Range, StateEffect, StateField } from "@codemirror/sta
 import { conceal } from "./conceal_fns";
 import { livePreviewState } from "obsidian";
 
-export interface ConcealSpec {
+export type ConcealSpec = {
 	start: number,
 	end: number,
 	replacement: string,
 	class?: string,
 	elementType?: string,
+} | [ConcealSpec, ...ConcealSpec[]] /* Indicates non-empty */;
+
+/**
+ * Iterate over the given ConcealSpec instance, calling 'f' for each individual
+ * object. If 'f' returns 'false', the iteration stops.
+ */
+export function iterConcealSpec(
+	spec: ConcealSpec,
+	f: (singleSpec: {
+		start: number,
+		end: number,
+		replacement: string,
+		class?: string,
+		elementType?: string,
+	}) => boolean | void,
+) {
+	const isSet = Array.isArray(spec);
+	if (!isSet) return f(spec);
+	else {
+		for (const subSpec of spec) {
+			const b = iterConcealSpec(subSpec, f);
+			if (typeof b === "boolean" && !b) return false;
+		}
+		return;
+	}
 }
 
-export interface Concealment extends ConcealSpec {
+export type Concealment = {
+	spec: ConcealSpec,
 	cursorPosType: "within" | "apart" | "edge",
 	enable: boolean,
-}
+};
+
+// List of distinct conceal specs
+export type ConcealSpecList = { inner: ConcealSpec }[];
 
 export type ConcealState = {
 	concealments: Concealment[],
@@ -86,32 +115,66 @@ function atSamePosAfter(
 	oldConceal: ConcealSpec,
 	newConceal: ConcealSpec,
 ): boolean {
-	// Set associativity to ensure that insertions on either side of the concealed
-	// region do not expand the region
-	const oldStartUpdated = update.changes.mapPos(oldConceal.start, 1);
-	const oldEndUpdated = update.changes.mapPos(oldConceal.end, -1);
-	return oldStartUpdated == newConceal.start && oldEndUpdated == newConceal.end;
+	const isSetOld = Array.isArray(oldConceal);
+	const isSetNew = Array.isArray(newConceal);
+
+	if (!isSetOld && !isSetNew) {
+		// Set associativity to ensure that insertions on either side of the concealed
+		// region do not expand the region
+		const oldStartUpdated = update.changes.mapPos(oldConceal.start, 1);
+		const oldEndUpdated = update.changes.mapPos(oldConceal.end, -1);
+		return oldStartUpdated == newConceal.start && oldEndUpdated == newConceal.end;
+	}
+
+	if (isSetOld && isSetNew) {
+		// Make sure the lengths are the same
+		if (oldConceal.length !== newConceal.length) return false;
+
+		for (let i = 0; i < oldConceal.length; ++i) {
+			const b = atSamePosAfter(update, oldConceal[i], newConceal[i]);
+			if (!b) return false;
+		}
+
+		return true;
+	}
+
+	return false;
 }
 
 function determineCursorPosType(
 	sel: EditorSelection,
 	concealSpec: ConcealSpec,
 ): Concealment["cursorPosType"] {
+	// Priority: "within" > "edge" > "apart"
+
+	let cursorPosType: Concealment["cursorPosType"] = "apart";
 
 	for (const range of sel.ranges) {
-		const overlapRangeFrom = Math.max(range.from, concealSpec.start);
-		const overlapRangeTo = Math.min(range.to, concealSpec.end);
-		if (
-			overlapRangeFrom === overlapRangeTo &&
-			(overlapRangeFrom === concealSpec.start || overlapRangeFrom === concealSpec.end)
-		) {
-			return "edge";
-		}
+		iterConcealSpec(concealSpec, (singleSpec) => {
+			// 'cursorPosType' is guaranteed to be "edge" or "apart" at this point
 
-		if (overlapRangeFrom <= overlapRangeTo) return "within";
+			const overlapRangeFrom = Math.max(range.from, singleSpec.start);
+			const overlapRangeTo = Math.min(range.to, singleSpec.end);
+
+			if (
+				overlapRangeFrom === overlapRangeTo &&
+				(overlapRangeFrom === singleSpec.start || overlapRangeFrom === singleSpec.end)
+			) {
+				cursorPosType = "edge";
+				return;
+			}
+
+			if (overlapRangeFrom <= overlapRangeTo) {
+				cursorPosType = "within";
+				return false; // Stop the iteration
+			}
+		});
+
+		// @ts-ignore
+		if (cursorPosType === "within") return "within";
 	}
 
-	return "apart";
+	return cursorPosType;
 }
 
 /*
@@ -157,33 +220,35 @@ function buildDecoSet(concealState: ConcealState): DecorationSet {
 	for (const concealment of concealState.concealments) {
 		if (!concealment.enable) continue;
 
-		if (concealment.start === concealment.end) {
-			// Add an additional "/" symbol, as part of concealing \\frac{}{} -> ()/()
-			decos.push(
-				Decoration.widget({
-					widget: new TextWidget(concealment.replacement),
-					block: false,
-				}).range(concealment.start, concealment.end)
-			);
-		}
-		else {
-			// Improve selecting empty replacements such as "\frac" -> ""
-			const inclusiveStart = concealment.replacement === "";
-			const inclusiveEnd = false;
+		iterConcealSpec(concealment.spec, (singleSpec) => {
+			if (singleSpec.start === singleSpec.end) {
+				// Add an additional "/" symbol, as part of concealing \\frac{}{} -> ()/()
+				decos.push(
+					Decoration.widget({
+						widget: new TextWidget(singleSpec.replacement),
+						block: false,
+					}).range(singleSpec.start, singleSpec.end)
+				);
+			}
+			else {
+				// Improve selecting empty replacements such as "\frac" -> ""
+				const inclusiveStart = singleSpec.replacement === "";
+				const inclusiveEnd = false;
 
-			decos.push(
-				Decoration.replace({
-					widget: new ConcealWidget(
-						concealment.replacement,
-						concealment.class,
-						concealment.elementType,
-					),
-					inclusiveStart,
-					inclusiveEnd,
-					block: false,
-				}).range(concealment.start, concealment.end)
-			);
-		}
+				decos.push(
+					Decoration.replace({
+						widget: new ConcealWidget(
+							singleSpec.replacement,
+							singleSpec.class,
+							singleSpec.elementType,
+						),
+						inclusiveStart,
+						inclusiveEnd,
+						block: false,
+					}).range(singleSpec.start, singleSpec.end)
+				);
+			}
+		});
 	}
 
 	return Decoration.set(decos, true);
@@ -239,17 +304,19 @@ export const concealStateField = StateField.define<ConcealState>({
 				clearTimeout(oldState.revealTimeout);
 			}
 
-			const concealSpecs = conceal(update.view);
+			const concealSpecList: ConcealSpecList = conceal(update.view);
 
 			// Collect concealments from the new conceal specs
 			const concealments: Concealment[] = [];
 			// concealments that should be revealed after a delay (i.e. 'delay' action)
 			const delayedConcealments: Concealment[] = [];
 
-			for (const concealSpec of concealSpecs) {
+			for (const container of concealSpecList) {
+				const concealSpec = container.inner;
+
 				const cursorPosType = determineCursorPosType(selection, concealSpec);
 				const oldConceal = oldState.concealments.find(
-					(old) => atSamePosAfter(update, old, concealSpec)
+					(old) => atSamePosAfter(update, old.spec, concealSpec)
 				);
 
 				const concealAction = determineAction(
@@ -257,7 +324,7 @@ export const concealStateField = StateField.define<ConcealState>({
 				);
 
 				const concealment: Concealment = {
-					...concealSpec,
+					spec: concealSpec,
 					cursorPosType,
 					enable: concealAction !== "reveal",
 				};
@@ -290,4 +357,4 @@ export const concealStateField = StateField.define<ConcealState>({
 			});
 		}),
 	]
-})
+});
