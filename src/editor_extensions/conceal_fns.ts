@@ -1,6 +1,6 @@
 // Conceal functions
 
-import { ConcealSpec, ConcealSpecList, iterConcealSpec } from "./conceal";
+import { ConcealSpec, mkConcealSpec } from "./conceal";
 import { findMatchingBracket } from "src/utils/editor_utils";
 import { EditorView } from "@codemirror/view";
 import { getEquationBounds } from "src/utils/context";
@@ -35,7 +35,7 @@ function getEndIncludingLimits(eqn: string, end: number): number {
 }
 
 
-function concealSymbols(eqn: string, prefix: string, suffix: string, symbolMap: {[key: string]: string}, className?: string, allowSucceedingLetters = true): ConcealSpecList {
+function concealSymbols(eqn: string, prefix: string, suffix: string, symbolMap: {[key: string]: string}, className?: string, allowSucceedingLetters = true): ConcealSpec[] {
 	const symbolNames = Object.keys(symbolMap);
 
 	const regexStr = prefix + "(" + escapeRegex(symbolNames.join("|")) + ")" + suffix;
@@ -44,7 +44,7 @@ function concealSymbols(eqn: string, prefix: string, suffix: string, symbolMap: 
 
 	const matches = [...eqn.matchAll(symbolRegex)];
 
-	const lst: ConcealSpecList = [];
+	const lst: ConcealSpec[] = [];
 
 	for (const match of matches) {
 		const symbol = match[1];
@@ -60,15 +60,15 @@ function concealSymbols(eqn: string, prefix: string, suffix: string, symbolMap: 
 
 		const end = getEndIncludingLimits(eqn, match.index + match[0].length);
 
-		lst.push({
-			inner: {start: match.index, end: end, replacement: symbolMap[symbol], class: className}
-		});
+		lst.push(mkConcealSpec({
+			start: match.index, end: end, replacement: symbolMap[symbol], class: className
+		}));
 	}
 
 	return lst;
 }
 
-function concealModifier(eqn: string, modifier: string, combiningCharacter: string): ConcealSpecList {
+function concealModifier(eqn: string, modifier: string, combiningCharacter: string): ConcealSpec[] {
 
 	const regexStr = ("\\\\" + modifier + "{([A-Za-z])}");
 	const symbolRegex = new RegExp(regexStr, "g");
@@ -76,20 +76,20 @@ function concealModifier(eqn: string, modifier: string, combiningCharacter: stri
 
 	const matches = [...eqn.matchAll(symbolRegex)];
 
-	const lst: ConcealSpecList = [];
+	const lst: ConcealSpec[] = [];
 
 	for (const match of matches) {
 		const symbol = match[1];
 
-		lst.push({
-			inner: {start: match.index, end: match.index + match[0].length, replacement: symbol + combiningCharacter, class: "latex-suite-unicode"}
-		});
+		lst.push(mkConcealSpec({
+			start: match.index, end: match.index + match[0].length, replacement: symbol + combiningCharacter, class: "latex-suite-unicode"
+		}));
 	}
 
 	return lst;
 }
 
-function concealSupSub(eqn: string, superscript: boolean, symbolMap: {[key: string]:string}): ConcealSpecList {
+function concealSupSub(eqn: string, superscript: boolean, symbolMap: {[key: string]:string}): ConcealSpec[] {
 
 	const prefix = superscript ? "\\^" : "_";
 	const regexStr = prefix + "{([A-Za-z0-9\\()\\[\\]/+-=<>':;\\\\ *]+)}";
@@ -98,7 +98,7 @@ function concealSupSub(eqn: string, superscript: boolean, symbolMap: {[key: stri
 	const matches = [...eqn.matchAll(regex)];
 
 
-	const lst: ConcealSpecList = [];
+	const lst: ConcealSpec[] = [];
 
 	for (const match of matches) {
 
@@ -116,23 +116,22 @@ function concealSupSub(eqn: string, superscript: boolean, symbolMap: {[key: stri
 			return symbolMap[b];
 		});
 
-
-		lst.push({
-			inner: {start: match.index, end: match.index + match[0].length, replacement: replacement, class: "cm-number", elementType: elementType}
-		});
+		lst.push(mkConcealSpec({
+			start: match.index, end: match.index + match[0].length, replacement: replacement, class: "cm-number", elementType: elementType
+		}));
 	}
 
 	return lst;
 }
 
-function concealModified_A_to_Z_0_to_9(eqn: string, mathBBsymbolMap: {[key: string]:string}): ConcealSpecList {
+function concealModified_A_to_Z_0_to_9(eqn: string, mathBBsymbolMap: {[key: string]:string}): ConcealSpec[] {
 
 	const regexStr = "\\\\(mathbf|boldsymbol|underline|mathrm|text|mathbb){([A-Za-z0-9 ]+)}";
 	const regex = new RegExp(regexStr, "g");
 
 	const matches = [...eqn.matchAll(regex)];
 
-	const lst: ConcealSpecList = [];
+	const lst: ConcealSpec[] = [];
 
 	for (const match of matches) {
 		const type = match[1];
@@ -142,34 +141,34 @@ function concealModified_A_to_Z_0_to_9(eqn: string, mathBBsymbolMap: {[key: stri
 		const end = start + match[0].length;
 
 		if (type === "mathbf" || type === "boldsymbol") {
-			lst.push({
-				inner: {start: start, end: end, replacement: value, class: "cm-concealed-bold"}
-			});
+			lst.push(mkConcealSpec({
+				start: start, end: end, replacement: value, class: "cm-concealed-bold"
+			}));
 		}
 		else if (type === "underline") {
-			lst.push({
-				inner: {start: start, end: end, replacement: value, class: "cm-concealed-underline"}
-			});
+			lst.push(mkConcealSpec({
+				start: start, end: end, replacement: value, class: "cm-concealed-underline"
+			}));
 		}
 		else if (type === "mathrm") {
-			lst.push({
-				inner: {start: start, end: end, replacement: value, class: "cm-concealed-mathrm"}
-			});
+			lst.push(mkConcealSpec({
+				start: start, end: end, replacement: value, class: "cm-concealed-mathrm"
+			}));
 		}
 		else if (type === "text") {
 			// Conceal _\text{}
 			if (start > 0 && eqn.charAt(start - 1) === "_") {
-				lst.push({
-					inner: {start: start - 1, end: end, replacement: value, class: "cm-concealed-mathrm", elementType: "sub"}
-				});
+				lst.push(mkConcealSpec({
+					start: start - 1, end: end, replacement: value, class: "cm-concealed-mathrm", elementType: "sub"
+				}));
 			}
 		}
 		else if (type === "mathbb") {
 			const letters = Array.from(value);
 			const replacement = letters.map(el => mathBBsymbolMap[el]).join("");
-			lst.push({
-				inner: {start: start, end: end, replacement: replacement}
-			});
+			lst.push(mkConcealSpec({
+				start: start, end: end, replacement: replacement
+			}));
 		}
 
 	}
@@ -177,7 +176,7 @@ function concealModified_A_to_Z_0_to_9(eqn: string, mathBBsymbolMap: {[key: stri
 	return lst;
 }
 
-function concealModifiedGreekLetters(eqn: string, greekSymbolMap: {[key: string]:string}): ConcealSpecList {
+function concealModifiedGreekLetters(eqn: string, greekSymbolMap: {[key: string]:string}): ConcealSpec[] {
 
 	const greekSymbolNames = Object.keys(greekSymbolMap);
 	const regexStr = "\\\\(underline|boldsymbol){\\\\(" + escapeRegex(greekSymbolNames.join("|"))  + ")}";
@@ -185,7 +184,7 @@ function concealModifiedGreekLetters(eqn: string, greekSymbolMap: {[key: string]
 
 	const matches = [...eqn.matchAll(regex)];
 
-	const lst: ConcealSpecList = [];
+	const lst: ConcealSpec[] = [];
 
 	for (const match of matches) {
 		const type = match[1];
@@ -195,28 +194,28 @@ function concealModifiedGreekLetters(eqn: string, greekSymbolMap: {[key: string]
 		const end = start + match[0].length;
 
 		if (type === "underline") {
-			lst.push({
-				inner: {start: start, end: end, replacement: greekSymbolMap[value], class: "cm-concealed-underline"}
-			});
+			lst.push(mkConcealSpec({
+				start: start, end: end, replacement: greekSymbolMap[value], class: "cm-concealed-underline"
+			}));
 		}
 		else if (type === "boldsymbol") {
-			lst.push({
-				inner: {start: start, end: end, replacement: greekSymbolMap[value], class: "cm-concealed-bold"}
-			});
+			lst.push(mkConcealSpec({
+				start: start, end: end, replacement: greekSymbolMap[value], class: "cm-concealed-bold"
+			}));
 		}
 	}
 
 	return lst;
 }
 
-function concealText(eqn: string): ConcealSpecList {
+function concealText(eqn: string): ConcealSpec[] {
 
 	const regexStr = "\\\\text{([A-Za-z0-9-.!?() ]+)}";
 	const regex = new RegExp(regexStr, "g");
 
 	const matches = [...eqn.matchAll(regex)];
 
-	const lst: ConcealSpecList = [];
+	const lst: ConcealSpec[] = [];
 
 	for (const match of matches) {
 		const value = match[1];
@@ -224,23 +223,23 @@ function concealText(eqn: string): ConcealSpecList {
 		const start = match.index;
 		const end = start + match[0].length;
 
-		lst.push({
-			inner: {start: start, end: end, replacement: value, class: "cm-concealed-mathrm cm-variable-2"}
-		});
+		lst.push(mkConcealSpec({
+			start: start, end: end, replacement: value, class: "cm-concealed-mathrm cm-variable-2"
+		}));
 
 	}
 
 	return lst;
 }
 
-function concealOperators(eqn: string, symbols: string[]): ConcealSpecList {
+function concealOperators(eqn: string, symbols: string[]): ConcealSpec[] {
 
 	const regexStr = "(\\\\(" + symbols.join("|") + "))([^a-zA-Z]|$)";
 	const regex = new RegExp(regexStr, "g");
 
 	const matches = [...eqn.matchAll(regex)];
 
-	const lst: ConcealSpecList = [];
+	const lst: ConcealSpec[] = [];
 
 	for (const match of matches) {
 		const value = match[2];
@@ -248,15 +247,15 @@ function concealOperators(eqn: string, symbols: string[]): ConcealSpecList {
 		const start = match.index;
 		const end = getEndIncludingLimits(eqn, start + match[1].length);
 
-		lst.push({
-			inner: {start: start, end: end, replacement: value, class: "cm-concealed-mathrm cm-variable-2"}
-		});
+		lst.push(mkConcealSpec({
+			start: start, end: end, replacement: value, class: "cm-concealed-mathrm cm-variable-2"
+		}));
 	}
 
 	return lst;
 }
 
-function concealAtoZ(eqn: string, prefix: string, suffix: string, symbolMap: {[key: string]: string}, className?: string): ConcealSpecList {
+function concealAtoZ(eqn: string, prefix: string, suffix: string, symbolMap: {[key: string]: string}, className?: string): ConcealSpec[] {
 
 	const regexStr = prefix + "([A-Z]+)" + suffix;
 	const symbolRegex = new RegExp(regexStr, "g");
@@ -264,27 +263,27 @@ function concealAtoZ(eqn: string, prefix: string, suffix: string, symbolMap: {[k
 
 	const matches = [...eqn.matchAll(symbolRegex)];
 
-	const lst: ConcealSpecList = [];
+	const lst: ConcealSpec[] = [];
 
 	for (const match of matches) {
 		const symbol = match[1];
 		const letters = Array.from(symbol);
 		const replacement = letters.map(el => symbolMap[el]).join("");
 
-		lst.push({
-			inner: {start: match.index, end: match.index + match[0].length, replacement: replacement, class: className}
-		});
+		lst.push(mkConcealSpec({
+			start: match.index, end: match.index + match[0].length, replacement: replacement, class: className
+		}));
 	}
 
 	return lst;
 }
 
-function concealBraKet(eqn: string): ConcealSpecList {
+function concealBraKet(eqn: string): ConcealSpec[] {
 	const langle = "〈";
 	const rangle = "〉";
 	const vert = "|";
 
-	const lst: ConcealSpecList = [];
+	const lst: ConcealSpec[] = [];
 
 	for (const match of eqn.matchAll(/\\(braket|bra|ket){/g)) {
 		// index of the "}"
@@ -299,22 +298,21 @@ function concealBraKet(eqn: string): ConcealSpecList {
 		const left = type === "ket" ? vert : langle;
 		const right = type === "bra" ? vert : rangle;
 
-		const concealSpec: ConcealSpec = [
+		lst.push(mkConcealSpec(
 			// Hide the command
 			{ start: commandStart, end: contentStart, replacement: "" },
 			// Replace the "{"
 			{ start: contentStart, end: contentStart + 1, replacement: left, class: "cm-bracket" },
 			// Replace the "}"
 			{ start: contentEnd, end: contentEnd + 1, replacement: right, class: "cm-bracket" },
-		];
-		lst.push({ inner: concealSpec });
+		));
 	}
 
 	return lst;
 }
 
-function concealSet(eqn: string): ConcealSpecList {
-	const lst: ConcealSpecList = [];
+function concealSet(eqn: string): ConcealSpec[] {
+	const lst: ConcealSpec[] = [];
 
 	for (const match of eqn.matchAll(/\\set\{/g)) {
 		const commandStart = match.index;
@@ -325,22 +323,21 @@ function concealSet(eqn: string): ConcealSpecList {
 		const contentEnd = findMatchingBracket(eqn, commandStart, "{", "}", false);
 		if (contentEnd === -1) continue;
 
-		const concealSpec: ConcealSpec = [
+		lst.push(mkConcealSpec(
 			// Hide "\set"
 			{ start: commandStart, end: contentStart, replacement: "" },
 			// Replace the "{"
 			{ start: contentStart, end: contentStart + 1, replacement: "{", class: "cm-bracket" },
 			// Replace the "}"
 			{ start: contentEnd, end: contentEnd + 1, replacement: "}", class: "cm-bracket" },
-		];
-		lst.push({ inner: concealSpec });
+		));
 	}
 
 	return lst;
 }
 
-function concealFraction(eqn: string): ConcealSpecList {
-	const lst: ConcealSpecList = [];
+function concealFraction(eqn: string): ConcealSpec[] {
+	const lst: ConcealSpec[] = [];
 
 	for (const match of eqn.matchAll(/\\(frac){/g)) {
 		// index of the closing bracket of the numerator
@@ -359,7 +356,7 @@ function concealFraction(eqn: string): ConcealSpecList {
 		const numeratorStart = commandStart + match[0].length - 1;
 		const denominatorStart = numeratorEnd + 1;
 
-		const concealSpec: ConcealSpec = [
+		lst.push(mkConcealSpec(
 			// Hide "\frac"
 			{ start: commandStart, end: numeratorStart, replacement: "" },
 			// Replace brackets of the numerator
@@ -370,15 +367,14 @@ function concealFraction(eqn: string): ConcealSpecList {
 			// Replace brackets of the denominator
 			{ start: denominatorStart, end: denominatorStart + 1, replacement: "(", class: "cm-bracket" },
 			{ start: denominatorEnd, end: denominatorEnd + 1, replacement: ")", class: "cm-bracket" },
-		];
-		lst.push({ inner: concealSpec});
+		));
 	}
 
 	return lst;
 }
 
-export function conceal(view: EditorView): ConcealSpecList {
-	const concealSpecList: ConcealSpecList = [];
+export function conceal(view: EditorView): ConcealSpec[] {
+	const concealSpecList: ConcealSpec[] = [];
 
 	for (const { from, to } of view.visibleRanges) {
 
@@ -429,12 +425,11 @@ export function conceal(view: EditorView): ConcealSpecList {
 
 				// Make the 'start' and 'end' fields represent positions in the entire
 				// document (not in a math expression)
-				for (const wrapper of lst) {
-					const concealSpec = wrapper.inner;
-					iterConcealSpec(concealSpec, (singleSpec) => {
-						singleSpec.start += bounds.start;
-						singleSpec.end += bounds.start;
-					});
+				for (const concealSpec of lst) {
+					for (const replace of concealSpec) {
+						replace.start += bounds.start;
+						replace.end += bounds.start;
+					}
 				}
 
 				concealSpecList.push(...lst);
