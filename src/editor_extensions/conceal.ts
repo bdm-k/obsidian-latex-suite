@@ -138,7 +138,6 @@ function determineCursorPosType(
 
 		}
 
-		// @ts-ignore
 		if (cursorPosType === "within") return "within";
 	}
 
