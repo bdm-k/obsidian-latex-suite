@@ -128,7 +128,7 @@ function determineCursorPosType(
 				(overlapRangeFrom === replace.start || overlapRangeFrom === replace.end)
 			) {
 				cursorPosType = "edge";
-				return;
+				continue;
 			}
 
 			if (overlapRangeFrom <= overlapRangeTo) {
