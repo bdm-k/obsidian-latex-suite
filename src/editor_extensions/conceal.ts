@@ -214,8 +214,8 @@ function buildDecoSet(concealments: Concealment[]) {
 }
 
 export const concealPlugin = ViewPlugin.fromClass(class {
-	// Stateful ViewPlugin: you should avoid one in general, but here 
-	// the approach based on StateField and updateListener conflicts with 
+	// Stateful ViewPlugin: you should avoid one in general, but here
+	// the approach based on StateField and updateListener conflicts with
 	// obsidian's internal logic and causes weird rendering.
 	concealments: Concealment[];
 	decorations: DecorationSet;
@@ -232,9 +232,9 @@ export const concealPlugin = ViewPlugin.fromClass(class {
 		}
 		this.decorations = buildDecoSet(this.concealments);
 
-		// Invoke this update method to reflect the field changes
+		// Invoke the update method to reflect the changes of this.decoration
 		view.dispatch();
-	}, 1000, true)
+	}, 1000, true);
 
 	update(update: ViewUpdate) {
 		if (!(update.docChanged || update.viewportChanged || update.selectionSet))
