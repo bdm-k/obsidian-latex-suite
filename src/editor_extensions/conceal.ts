@@ -1,7 +1,7 @@
 // https://discuss.codemirror.net/t/concealing-syntax/3135
 
 import { ViewUpdate, Decoration, DecorationSet, WidgetType, ViewPlugin, EditorView } from "@codemirror/view";
-import { EditorSelection, Range } from "@codemirror/state";
+import { EditorSelection, Range, RangeSet, RangeValue } from "@codemirror/state";
 import { conceal } from "./conceal_fns";
 import { debounce, livePreviewState } from "obsidian";
 
@@ -216,6 +216,26 @@ function buildDecoSet(concealments: Concealment[]) {
 	return Decoration.set(decos, true);
 }
 
+function buildAtomicRanges(concealments: Concealment[]) {
+	const fakeval = new class extends RangeValue{};
+	const ranges = [];
+	for (const conc of concealments) {
+		if (!conc.enable) continue;
+
+		const spec = conc.spec;
+		for(let i = 0; i < spec.length; i++) {
+			if (i+1 !== spec.length && spec[i].text === "" && spec[i].end === spec[i+1].start) {
+				// An empty replacement is merged with the one immediately following it (e.g. "\frac" -> "").
+				ranges.push(fakeval.range(spec[i].start, spec[i+1].end));
+				i++;
+			} else {
+				ranges.push(fakeval.range(spec[i].start, spec[i].end));
+			}
+		}
+	}
+	return RangeSet.of(ranges, true);
+}
+
 export const mkConcealPlugin = (revealTimeout: number) => ViewPlugin.fromClass(class {
 	// Stateful ViewPlugin: you should avoid one in general, but here
 	// the approach based on StateField and updateListener conflicts with
@@ -290,5 +310,6 @@ export const mkConcealPlugin = (revealTimeout: number) => ViewPlugin.fromClass(c
 	}
 }, {
 	decorations: v => v.decorations,
-	provide: (plugin) => EditorView.atomicRanges.of((view) => view.plugin(plugin).decorations),
+	provide: plugin =>
+		EditorView.atomicRanges.of((view) => buildAtomicRanges(view.plugin(plugin).concealments)),
 });
