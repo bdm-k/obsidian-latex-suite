@@ -1,7 +1,7 @@
 // https://discuss.codemirror.net/t/concealing-syntax/3135
 
 import { ViewUpdate, Decoration, DecorationSet, WidgetType, ViewPlugin, EditorView } from "@codemirror/view";
-import { EditorSelection, Range, RangeSet, RangeValue } from "@codemirror/state";
+import { EditorSelection, Range, RangeSet, RangeSetBuilder, RangeValue } from "@codemirror/state";
 import { conceal } from "./conceal_fns";
 import { debounce, livePreviewState } from "obsidian";
 
@@ -216,24 +216,30 @@ function buildDecoSet(concealments: Concealment[]) {
 	return Decoration.set(decos, true);
 }
 
+// Build atomic ranges from the given concealments.
+// The resulting ranges are basically the same as the original replacements, but empty replacements 
+// are merged with the "next character," which can be either plain text or another replacement.
+// This adjustment makes cursor movement around empty replacements more intuitive.
 function buildAtomicRanges(concealments: Concealment[]) {
-	const fakeval = new class extends RangeValue{};
-	const ranges = [];
-	for (const conc of concealments) {
-		if (!conc.enable) continue;
+	const repls: Replacement[] = 
+		concealments.filter(c=>c.enable).flatMap(c => c.spec).sort((a,b) => a.start - b.start);
 
-		const spec = conc.spec;
-		for(let i = 0; i < spec.length; i++) {
-			if (i+1 !== spec.length && spec[i].text === "" && spec[i].end === spec[i+1].start) {
-				// An empty replacement is merged with the one immediately following it (e.g. "\frac" -> "").
-				ranges.push(fakeval.range(spec[i].start, spec[i+1].end));
+	// RangeSet requires RangeValue but we do not need one
+	const fakeval = new class extends RangeValue{};
+	const builder = new RangeSetBuilder();
+	for (let i = 0; i < repls.length; i++) {
+		if (repls[i].text === "") {
+			if (i+1 != repls.length && repls[i].end == repls[i+1].start) {
+				builder.add(repls[i].start, repls[i+1].end, fakeval);
 				i++;
 			} else {
-				ranges.push(fakeval.range(spec[i].start, spec[i].end));
+				builder.add(repls[i].start, repls[i].end + 1, fakeval);
 			}
+		} else {
+			builder.add(repls[i].start, repls[i].end, fakeval);
 		}
 	}
-	return RangeSet.of(ranges, true);
+	return builder.finish();
 }
 
 export const mkConcealPlugin = (revealTimeout: number) => ViewPlugin.fromClass(class {
@@ -242,11 +248,14 @@ export const mkConcealPlugin = (revealTimeout: number) => ViewPlugin.fromClass(c
 	// obsidian's internal logic and causes weird rendering.
 	concealments: Concealment[];
 	decorations: DecorationSet;
+	atomicRanges: RangeSet<RangeValue>;
 	delayEnabled: boolean;
+
 
 	constructor() {
 		this.concealments = [];
 		this.decorations = Decoration.none;
+		this.atomicRanges = RangeSet.empty;
 		this.delayEnabled = revealTimeout > 0;
 	}
 
@@ -256,6 +265,7 @@ export const mkConcealPlugin = (revealTimeout: number) => ViewPlugin.fromClass(c
 			concealment.enable = false;
 		}
 		this.decorations = buildDecoSet(this.concealments);
+		this.atomicRanges = buildAtomicRanges(this.concealments);
 
 		// Invoke the update method to reflect the changes of this.decoration
 		view.dispatch();
@@ -307,9 +317,9 @@ export const mkConcealPlugin = (revealTimeout: number) => ViewPlugin.fromClass(c
 
 		this.concealments = concealments;
 		this.decorations = buildDecoSet(this.concealments);
+		this.atomicRanges = buildAtomicRanges(this.concealments);
 	}
 }, {
 	decorations: v => v.decorations,
-	provide: plugin =>
-		EditorView.atomicRanges.of((view) => buildAtomicRanges(view.plugin(plugin).concealments)),
+	provide: plugin => EditorView.atomicRanges.of(view => view.plugin(plugin).atomicRanges),
 });
