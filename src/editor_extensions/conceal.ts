@@ -217,15 +217,17 @@ function buildDecoSet(concealments: Concealment[]) {
 }
 
 // Build atomic ranges from the given concealments.
-// The resulting ranges are basically the same as the original replacements, but empty replacements 
+// The resulting ranges are basically the same as the original replacements, but empty replacements
 // are merged with the "next character," which can be either plain text or another replacement.
 // This adjustment makes cursor movement around empty replacements more intuitive.
 function buildAtomicRanges(concealments: Concealment[]) {
-	const repls: Replacement[] = 
-		concealments.filter(c=>c.enable).flatMap(c => c.spec).sort((a,b) => a.start - b.start);
+	const repls: Replacement[] = concealments
+		.filter(c => c.enable)
+		.flatMap(c => c.spec)
+		.sort((a, b) => a.start - b.start);
 
 	// RangeSet requires RangeValue but we do not need one
-	const fakeval = new class extends RangeValue{};
+	const fakeval = new (class extends RangeValue {});
 	const builder = new RangeSetBuilder();
 	for (let i = 0; i < repls.length; i++) {
 		if (repls[i].text === "") {
